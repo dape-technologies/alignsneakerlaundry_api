@@ -9,20 +9,10 @@ class Order extends Model
 {
     use HasFactory;
 
-    public const STATUSES = [
-        'received',
-        'washing',
-        'drying',
-        'quality_check',
-        'ready',
-        'collected',
-        'cancelled',
-    ];
-
     protected $fillable = [
-        'reference', 'client_id', 'created_by', 'status', 'received_at', 'due_at',
+        'reference', 'client_id', 'client_name', 'notification_phone', 'notification_email',
+        'created_by', 'status', 'received_at', 'due_at',
         'ready_at', 'collected_at', 'subtotal', 'discount', 'total', 'notes',
-        'ready_notified_at',
     ];
 
     protected $appends = ['amount_paid', 'balance'];
@@ -34,7 +24,6 @@ class Order extends Model
             'due_at' => 'datetime',
             'ready_at' => 'datetime',
             'collected_at' => 'datetime',
-            'ready_notified_at' => 'datetime',
             'subtotal' => 'integer',
             'discount' => 'integer',
             'total' => 'integer',
@@ -54,6 +43,11 @@ class Order extends Model
     public function items()
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    public function cleaningSessions()
+    {
+        return $this->hasMany(CleaningSession::class);
     }
 
     public function photos()

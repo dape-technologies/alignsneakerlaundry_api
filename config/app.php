@@ -105,6 +105,10 @@ return [
         ),
     ],
 
+    'business_phone' => env('BUSINESS_PHONE', '+256 700 000 000'),
+
+    'pickup_instructions' => env('PICKUP_INSTRUCTIONS', 'Please collect from our Kampala service desk during business hours.'),
+
     /*
     |--------------------------------------------------------------------------
     | Maintenance Mode Driver
