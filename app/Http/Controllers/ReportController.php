@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CleaningSession;
 use App\Models\Client;
 use App\Models\Order;
 use App\Models\Payment;
@@ -25,7 +26,8 @@ class ReportController extends Controller
             'collected_revenue' => (int) (clone $payments)->sum('amount'),
             'outstanding' => (int) (clone $orders)->where('status', '!=', 'cancelled')->get()->sum(fn (Order $order) => $order->balance),
             'average_order_value' => (int) round((clone $orders)->where('status', '!=', 'cancelled')->avg('total') ?? 0),
-            'status_counts' => (clone $orders)->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total', 'status'),
+            'status_counts' => CleaningSession::whereHas('order', fn ($query) => $query->whereBetween('received_at', [$from, $to]))
+                ->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total', 'status'),
             'daily_revenue' => (clone $payments)
                 ->selectRaw('date(paid_at) as date, sum(amount) as total')
                 ->groupBy('date')

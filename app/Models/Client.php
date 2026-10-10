@@ -4,11 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Notifications\Notifiable;
 
 class Client extends Model
 {
-    use HasFactory, Notifiable;
+    use HasFactory;
 
     protected $fillable = ['name', 'phone', 'email', 'notes'];
 
@@ -17,8 +16,8 @@ class Client extends Model
         return $this->hasMany(Order::class);
     }
 
-    public function routeNotificationForMail(): ?string
+    public function shoes()
     {
-        return $this->email;
+        return $this->hasMany(Shoe::class);
     }
 }
