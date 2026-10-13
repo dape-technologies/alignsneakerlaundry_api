@@ -16,48 +16,54 @@ class CleaningSessionController extends Controller
     {
         $data = $request->validate([
             'status' => ['required', Rule::in(CleaningSession::STATUSES)],
+            'expected_status' => ['nullable', Rule::in(CleaningSession::STATUSES)],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $previous = $cleaningSession->status;
-        $allowed = CleaningSession::TRANSITIONS[$previous] ?? [];
-        if (! in_array($data['status'], $allowed, true) && $request->user()->role !== 'admin') {
-            throw ValidationException::withMessages(['status' => ['That workflow change is not permitted.']]);
-        }
-        if ($previous === $data['status']) {
-            throw ValidationException::withMessages(['status' => ['The footwear is already at that stage.']]);
-        }
+        $result = DB::transaction(function () use ($request, $cleaningSession, $data) {
+            $session = CleaningSession::query()->lockForUpdate()->findOrFail($cleaningSession->id);
+            $previous = $session->status;
 
-        $order = $cleaningSession->order;
-        if ($data['status'] === 'ready_for_collection' && ! $order->notification_email) {
-            throw ValidationException::withMessages(['status' => ['Add a valid client email before marking this footwear ready for collection.']]);
-        }
+            if (($data['expected_status'] ?? $previous) !== $previous) {
+                abort(409, 'This footwear was moved by another team member. Refresh the board and try again.');
+            }
 
-        $delivery = DB::transaction(function () use ($request, $cleaningSession, $data, $previous, $order) {
+            $allowed = CleaningSession::TRANSITIONS[$previous] ?? [];
+            if (! in_array($data['status'], $allowed, true) && $request->user()->role !== 'admin') {
+                throw ValidationException::withMessages(['status' => ['That workflow change is not permitted.']]);
+            }
+            if ($previous === $data['status']) {
+                throw ValidationException::withMessages(['status' => ['The footwear is already at that stage.']]);
+            }
+
+            $order = $session->order()->lockForUpdate()->firstOrFail();
+            if ($data['status'] === 'ready_for_collection' && ! $order->notification_email) {
+                throw ValidationException::withMessages(['status' => ['Add a valid client email before marking this footwear ready for collection.']]);
+            }
+
             $timestamps = match ($data['status']) {
+                'received' => ['cleaning_at' => null, 'ready_at' => null, 'collected_at' => null],
                 'cleaning' => ['cleaning_at' => now(), 'ready_at' => null, 'collected_at' => null],
-                'drying' => ['drying_at' => now()],
-                'quality_check' => ['quality_checked_at' => now()],
-                'ready_for_collection' => ['ready_at' => now(), 'ready_cycle' => $cleaningSession->ready_cycle + 1],
+                'ready_for_collection' => ['ready_at' => now(), 'ready_cycle' => $session->ready_cycle + 1],
                 'collected' => ['collected_at' => now()],
                 default => [],
             };
 
-            $cleaningSession->update(['status' => $data['status'], ...$timestamps]);
-            $cleaningSession->statusHistory()->create([
+            $session->update(['status' => $data['status'], ...$timestamps]);
+            $session->statusHistory()->create([
                 'from_status' => $previous,
                 'to_status' => $data['status'],
                 'changed_by' => $request->user()->id,
                 'notes' => $data['notes'] ?? null,
             ]);
-            $this->syncOrderStatus($cleaningSession->order);
+            $this->syncOrderStatus($order);
 
             if ($data['status'] !== 'ready_for_collection') {
-                return null;
+                return ['session' => $session, 'delivery' => null];
             }
 
-            return $cleaningSession->notifications()->firstOrCreate(
-                ['idempotency_key' => "ready:{$cleaningSession->id}:{$cleaningSession->ready_cycle}"],
+            $delivery = $session->notifications()->firstOrCreate(
+                ['idempotency_key' => "ready:{$session->id}:{$session->ready_cycle}"],
                 [
                     'event' => 'ready_for_collection',
                     'channel' => 'mail',
@@ -67,13 +73,15 @@ class CleaningSessionController extends Controller
                     'queued_at' => now(),
                 ],
             );
+
+            return ['session' => $session, 'delivery' => $delivery];
         });
 
-        if ($delivery) {
-            SendPickupReadyEmail::dispatch($delivery)->afterCommit();
+        if ($result['delivery']) {
+            SendPickupReadyEmail::dispatch($result['delivery'])->afterCommit();
         }
 
-        return response()->json($this->loadSession($cleaningSession));
+        return response()->json($this->loadSession($result['session']));
     }
 
     public function resend(Request $request, CleaningSession $cleaningSession)
@@ -102,7 +110,7 @@ class CleaningSessionController extends Controller
     private function syncOrderStatus($order): void
     {
         $statuses = $order->cleaningSessions()->pluck('status');
-        $priority = ['received', 'cleaning', 'drying', 'quality_check', 'ready_for_collection', 'collected'];
+        $priority = ['received', 'cleaning', 'ready_for_collection', 'collected'];
         $active = $statuses->reject(fn ($status) => $status === 'cancelled');
         $status = $active->isEmpty()
             ? 'cancelled'
