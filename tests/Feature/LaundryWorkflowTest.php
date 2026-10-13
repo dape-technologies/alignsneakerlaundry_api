@@ -70,7 +70,7 @@ class LaundryWorkflowTest extends TestCase
     {
         Queue::fake();
         $worker = User::factory()->create(['role' => 'worker']);
-        [$session] = $this->sessionAt('quality_check', $worker);
+        [$session] = $this->sessionAt('cleaning', $worker);
         Sanctum::actingAs($worker);
 
         $this->patchJson("/api/cleaning-sessions/{$session->id}/status", ['status' => 'ready_for_collection'])
@@ -84,18 +84,29 @@ class LaundryWorkflowTest extends TestCase
         $this->assertSame(1, $session->fresh()->ready_cycle);
     }
 
-    public function test_worker_cannot_skip_workflow_but_admin_can_override_with_history(): void
+    public function test_worker_can_move_footwear_between_any_active_roadmap_stages(): void
     {
+        Queue::fake();
         $worker = User::factory()->create(['role' => 'worker']);
         [$session] = $this->sessionAt('received', $worker);
         Sanctum::actingAs($worker);
-        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", ['status' => 'quality_check'])->assertUnprocessable();
 
-        Sanctum::actingAs(User::factory()->create(['role' => 'admin']));
-        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", ['status' => 'quality_check', 'notes' => 'Manager inspection.'])->assertOk();
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'ready_for_collection',
+            'expected_status' => 'received',
+        ])->assertOk();
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'received',
+            'expected_status' => 'ready_for_collection',
+        ])->assertOk();
+
         $this->assertDatabaseHas('cleaning_session_status_history', [
-            'cleaning_session_id' => $session->id, 'from_status' => 'received', 'to_status' => 'quality_check',
+            'cleaning_session_id' => $session->id, 'from_status' => 'received', 'to_status' => 'ready_for_collection',
         ]);
+        $this->assertDatabaseHas('cleaning_session_status_history', [
+            'cleaning_session_id' => $session->id, 'from_status' => 'ready_for_collection', 'to_status' => 'received',
+        ]);
+        $this->assertNull($session->fresh()->ready_at);
     }
 
     public function test_ready_email_job_records_successful_delivery(): void
@@ -121,7 +132,7 @@ class LaundryWorkflowTest extends TestCase
     public function test_ready_transition_requires_an_email_destination(): void
     {
         $worker = User::factory()->create(['role' => 'worker']);
-        [$session, $order] = $this->sessionAt('quality_check', $worker);
+        [$session, $order] = $this->sessionAt('cleaning', $worker);
         $order->update(['notification_email' => null]);
         Sanctum::actingAs($worker);
 
@@ -136,6 +147,34 @@ class LaundryWorkflowTest extends TestCase
         $this->getJson('/api/reports')->assertForbidden();
         Sanctum::actingAs(User::factory()->create(['role' => 'admin']));
         $this->getJson('/api/reports')->assertOk();
+    }
+
+    public function test_stale_board_update_is_rejected(): void
+    {
+        $worker = User::factory()->create(['role' => 'worker']);
+        [$session] = $this->sessionAt('received', $worker);
+        $session->update(['status' => 'cleaning']);
+        Sanctum::actingAs($worker);
+
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'cleaning',
+            'expected_status' => 'received',
+        ])->assertConflict();
+    }
+
+    public function test_dashboard_returns_the_three_stage_pipeline_and_active_footwear(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        [$session] = $this->sessionAt('received', $admin);
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/dashboard')
+            ->assertOk()
+            ->assertJsonPath('pipeline_counts.received', 1)
+            ->assertJsonPath('pipeline_counts.cleaning', 0)
+            ->assertJsonPath('pipeline_counts.ready_for_collection', 0)
+            ->assertJsonPath('active_sessions.0.id', $session->id)
+            ->assertJsonPath('active_sessions.0.shoe.reference', 'ASL-S-000003');
     }
 
     private function sessionAt(string $status, User $worker): array

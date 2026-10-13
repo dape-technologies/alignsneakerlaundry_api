@@ -24,8 +24,8 @@ class DatabaseSeeder extends Seeder
             ['Daniel Ssemanda', '+256704825116', 'daniel@example.test', 'cleaning', 'Leather sneakers', 'Adidas', 'Stan Smith', 'Black', 'Premium care', 45000],
             ['Lillian Akello', '+256781552094', 'lillian@example.test', 'received', 'Canvas shoes', 'Converse', 'Chuck 70', 'Cream', 'Standard wash', 20000],
             ['Isaac Mugisha', '+256755613420', 'isaac@example.test', 'collected', 'Basketball shoes', 'Puma', 'All Pro Nitro', 'Blue', 'Deep clean', 35000],
-            ['Sarah Nakiwunga', '+256701384522', 'sarah@example.test', 'drying', 'Training shoes', 'New Balance', 'Fresh Foam X', 'Grey', 'Deep clean', 32000],
-            ['Michael Ocen', '+256787443091', 'michael@example.test', 'quality_check', 'Suede sneakers', 'Clarks', 'Torhill', 'Tan', 'Premium care', 50000],
+            ['Sarah Nakiwunga', '+256701384522', 'sarah@example.test', 'cleaning', 'Training shoes', 'New Balance', 'Fresh Foam X', 'Grey', 'Deep clean', 32000],
+            ['Michael Ocen', '+256787443091', 'michael@example.test', 'cleaning', 'Suede sneakers', 'Clarks', 'Torhill', 'Tan', 'Premium care', 50000],
             ['Grace Namusoke', '+256759220184', 'grace@example.test', 'cancelled', 'Kids sneakers', 'Vans', 'Old Skool', 'Pink', 'Standard wash', 18000],
             ['Ronald Kato', '+256743865219', 'ronald@example.test', 'ready_for_collection', 'Football boots', 'Nike', 'Mercurial', 'Red', 'Premium care', 55000],
             ['Maya Atwine', '+256772341908', 'maya@example.test', 'collected', 'Running shoes', 'Nike', 'Vomero 17', 'White', 'Re-clean', 15000],
@@ -64,9 +64,7 @@ class DatabaseSeeder extends Seeder
                     'unit_price' => $price,
                     'ready_cycle' => in_array($status, ['ready_for_collection', 'collected'], true) ? 1 : 0,
                     'received_at' => $order->received_at,
-                    'cleaning_at' => in_array($status, ['cleaning', 'drying', 'quality_check', 'ready_for_collection', 'collected'], true) ? $order->received_at->copy()->addHours(3) : null,
-                    'drying_at' => in_array($status, ['drying', 'quality_check', 'ready_for_collection', 'collected'], true) ? $order->received_at->copy()->addHours(8) : null,
-                    'quality_checked_at' => in_array($status, ['quality_check', 'ready_for_collection', 'collected'], true) ? $order->received_at->copy()->addDay() : null,
+                    'cleaning_at' => in_array($status, ['cleaning', 'ready_for_collection', 'collected'], true) ? $order->received_at->copy()->addHours(3) : null,
                     'ready_at' => $order->ready_at,
                     'collected_at' => $order->collected_at,
                 ]);
@@ -94,7 +92,7 @@ class DatabaseSeeder extends Seeder
             $amountPaid = match ($status) {
                 'collected' => $price,
                 'ready_for_collection' => intdiv($price, 2),
-                'cleaning', 'drying', 'quality_check' => min(10000, $price),
+                'cleaning' => min(10000, $price),
                 default => 0,
             };
             if ($amountPaid > 0 && $order->payments()->doesntExist()) {

@@ -10,16 +10,13 @@ class CleaningSession extends Model
     use HasFactory;
 
     public const STATUSES = [
-        'received', 'cleaning', 'drying', 'quality_check',
-        'ready_for_collection', 'collected', 'cancelled',
+        'received', 'cleaning', 'ready_for_collection', 'collected', 'cancelled',
     ];
 
     public const TRANSITIONS = [
-        'received' => ['cleaning', 'cancelled'],
-        'cleaning' => ['drying', 'cancelled'],
-        'drying' => ['quality_check', 'cleaning', 'cancelled'],
-        'quality_check' => ['ready_for_collection', 'cleaning', 'cancelled'],
-        'ready_for_collection' => ['collected', 'cleaning'],
+        'received' => ['cleaning', 'ready_for_collection', 'cancelled'],
+        'cleaning' => ['received', 'ready_for_collection', 'cancelled'],
+        'ready_for_collection' => ['received', 'cleaning', 'collected'],
         'collected' => [],
         'cancelled' => [],
     ];
