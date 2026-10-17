@@ -15,7 +15,7 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        if (! Auth::attempt([...$credentials, 'is_active' => true], $request->boolean('remember'))) {
+        if (! Auth::attempt([...$credentials, 'is_active' => true], false)) {
             throw ValidationException::withMessages(['email' => ['The supplied credentials are incorrect.']]);
         }
 

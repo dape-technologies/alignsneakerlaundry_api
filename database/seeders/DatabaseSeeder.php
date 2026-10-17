@@ -10,11 +10,11 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        User::updateOrCreate(['email' => 'admin@alignlaundry.test'], [
-            'name' => 'Amina Nansubuga', 'password' => Hash::make('password'), 'role' => 'admin', 'is_active' => true,
-        ]);
-        User::updateOrCreate(['email' => 'worker@alignlaundry.test'], [
-            'name' => 'Joel Kato', 'password' => Hash::make('password'), 'role' => 'worker', 'is_active' => true,
+        User::updateOrCreate(['role' => 'admin'], [
+            'name' => 'Align Owner',
+            'email' => 'admin@alignsneakerlaundry',
+            'password' => Hash::make('admin1234'),
+            'is_active' => true,
         ]);
     }
 }

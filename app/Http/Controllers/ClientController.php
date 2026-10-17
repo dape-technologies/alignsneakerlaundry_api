@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Client;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class ClientController extends Controller
@@ -55,9 +56,28 @@ class ClientController extends Controller
             'phone' => ['required', 'string', 'max:30', 'unique:clients,phone'],
             'email' => ['required', 'email', 'max:190'],
             'notes' => ['nullable', 'string', 'max:2000'],
+            'shoe.shoe_type' => ['required', 'string', 'max:100'],
+            'shoe.brand' => ['nullable', 'string', 'max:100'],
+            'shoe.model' => ['nullable', 'string', 'max:100'],
+            'shoe.color' => ['nullable', 'string', 'max:100'],
+            'shoe.size' => ['nullable', 'string', 'max:40'],
+            'shoe.identifying_notes' => ['nullable', 'string', 'max:2000'],
+            'reference_photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:6144'],
         ]);
 
-        return response()->json(Client::create($data), 201);
+        $client = DB::transaction(function () use ($request, $data) {
+            $client = Client::create(collect($data)->only(['name', 'phone', 'email', 'notes'])->all());
+            $shoeData = $data['shoe'];
+            if ($request->hasFile('reference_photo')) {
+                $shoeData['reference_photo_path'] = $request->file('reference_photo')->store("clients/{$client->id}/shoes", 'public');
+            }
+            $shoe = $client->shoes()->create($shoeData);
+            $shoe->update(['reference' => 'ASL-S-'.str_pad((string) $shoe->id, 6, '0', STR_PAD_LEFT)]);
+
+            return $client;
+        });
+
+        return response()->json($client->load('shoes'), 201);
     }
 
     public function show(Client $client)

@@ -30,6 +30,9 @@
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
+        <env name="SESSION_LIFETIME" value="525600"/>
+        <env name="SESSION_EXPIRE_ON_CLOSE" value="true"/>
+        <env name="SANCTUM_STATEFUL_DOMAINS" value="localhost:5173,127.0.0.1:5173"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
