@@ -4,11 +4,31 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Tests\TestCase;
 
 class AuthWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withHeader('Origin', 'http://localhost:5173');
+    }
+
+    public function test_stateful_api_uses_sanctum_session_middleware_only_once(): void
+    {
+        $route = app('router')->getRoutes()->match(Request::create(
+            '/api/cleaning-sessions/1/status',
+            'PATCH',
+        ));
+
+        $this->assertContains('auth:sanctum', $route->gatherMiddleware());
+        $this->assertNotContains('web', $route->gatherMiddleware());
+        $this->assertTrue((bool) config('session.expire_on_close'));
+        $this->assertGreaterThanOrEqual(525600, config('session.lifetime'));
+    }
 
     public function test_active_staff_member_can_login_use_the_session_and_logout(): void
     {
@@ -51,5 +71,17 @@ class AuthWorkflowTest extends TestCase
             ->assertJsonValidationErrors('email');
 
         $this->getJson('/api/me')->assertUnauthorized();
+    }
+
+    public function test_configured_owner_credentials_can_login(): void
+    {
+        $this->seed();
+
+        $this->postJson('/api/login', [
+            'email' => 'admin@alignsneakerlaundry',
+            'password' => 'admin1234',
+        ])->assertOk()
+            ->assertJsonPath('user.role', 'admin')
+            ->assertJsonPath('user.email', 'admin@alignsneakerlaundry');
     }
 }

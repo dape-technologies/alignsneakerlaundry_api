@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\AttendantController;
 use App\Http\Controllers\CleaningSessionController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\DashboardController;
@@ -17,9 +18,9 @@ Route::get('/health', function () {
     ]);
 });
 
-Route::post('/login', [AuthController::class, 'login'])->middleware(['web', 'throttle:6,1']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1');
 
-Route::middleware(['web', 'auth:sanctum'])->group(function () {
+Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/dashboard', DashboardController::class);
@@ -33,4 +34,10 @@ Route::middleware(['web', 'auth:sanctum'])->group(function () {
     Route::post('/cleaning-sessions/{cleaningSession}/notifications', [CleaningSessionController::class, 'resend']);
 
     Route::get('/reports', [ReportController::class, 'index'])->middleware('role:admin');
+    Route::middleware('role:admin')->group(function () {
+        Route::delete('/orders/{order}', [OrderController::class, 'destroy']);
+        Route::get('/attendants', [AttendantController::class, 'index']);
+        Route::post('/attendants', [AttendantController::class, 'store']);
+        Route::patch('/attendants/{attendant}', [AttendantController::class, 'updateAccess']);
+    });
 });

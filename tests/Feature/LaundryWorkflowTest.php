@@ -66,6 +66,58 @@ class LaundryWorkflowTest extends TestCase
         $this->assertDatabaseCount('cleaning_sessions', 2);
     }
 
+    public function test_registering_a_client_also_registers_their_required_footwear(): void
+    {
+        Sanctum::actingAs(User::factory()->create(['role' => 'worker', 'is_active' => true]));
+
+        $this->postJson('/api/clients', [
+            'name' => 'Doreen Akello',
+            'phone' => '0772555011',
+            'email' => 'doreen@example.test',
+            'shoe' => ['shoe_type' => 'Sneakers', 'brand' => 'Adidas', 'model' => 'Samba'],
+        ])->assertCreated()
+            ->assertJsonPath('shoes.0.shoe_type', 'Sneakers')
+            ->assertJsonPath('shoes.0.brand', 'Adidas');
+
+        $this->assertDatabaseCount('clients', 1);
+        $this->assertDatabaseCount('shoes', 1);
+        $this->assertDatabaseHas('shoes', ['model' => 'Samba']);
+    }
+
+    public function test_client_registration_requires_footwear(): void
+    {
+        Sanctum::actingAs(User::factory()->create(['role' => 'worker', 'is_active' => true]));
+
+        $this->postJson('/api/clients', [
+            'name' => 'No Shoe Client',
+            'phone' => '0772555012',
+            'email' => 'noshoe@example.test',
+        ])->assertUnprocessable()->assertJsonValidationErrors('shoe.shoe_type');
+    }
+
+    public function test_owner_can_delete_an_order_and_its_roadmap_card(): void
+    {
+        $owner = User::factory()->create(['role' => 'admin', 'is_active' => true]);
+        [$session, $order] = $this->sessionAt('received', $owner);
+        Sanctum::actingAs($owner);
+
+        $this->deleteJson("/api/orders/{$order->id}")->assertNoContent();
+
+        $this->assertDatabaseMissing('orders', ['id' => $order->id]);
+        $this->assertDatabaseMissing('cleaning_sessions', ['id' => $session->id]);
+        $this->getJson('/api/dashboard')->assertOk()->assertJsonCount(0, 'active_sessions');
+    }
+
+    public function test_attendant_cannot_delete_an_order(): void
+    {
+        $owner = User::factory()->create(['role' => 'admin', 'is_active' => true]);
+        [, $order] = $this->sessionAt('received', $owner);
+        Sanctum::actingAs(User::factory()->create(['role' => 'worker', 'is_active' => true]));
+
+        $this->deleteJson("/api/orders/{$order->id}")->assertForbidden();
+        $this->assertDatabaseHas('orders', ['id' => $order->id]);
+    }
+
     public function test_ready_status_queues_one_email_per_readiness_cycle(): void
     {
         Queue::fake();
@@ -107,6 +159,32 @@ class LaundryWorkflowTest extends TestCase
             'cleaning_session_id' => $session->id, 'from_status' => 'ready_for_collection', 'to_status' => 'received',
         ]);
         $this->assertNull($session->fresh()->ready_at);
+    }
+
+    public function test_worker_login_session_remains_authenticated_during_a_roadmap_move(): void
+    {
+        $worker = User::factory()->create([
+            'email' => 'roadmap.worker@example.test',
+            'password' => 'password',
+            'role' => 'worker',
+            'is_active' => true,
+        ]);
+        [$session] = $this->sessionAt('received', $worker);
+        $this->withHeader('Origin', 'http://localhost:5173');
+
+        $this->postJson('/api/login', [
+            'email' => 'roadmap.worker@example.test',
+            'password' => 'password',
+        ])->assertOk()->assertJsonPath('user.role', 'worker');
+
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'cleaning',
+            'expected_status' => 'received',
+        ])->assertOk()->assertJsonPath('status', 'cleaning');
+
+        $this->getJson('/api/me')
+            ->assertOk()
+            ->assertJsonPath('user.id', $worker->id);
     }
 
     public function test_ready_email_job_records_successful_delivery(): void
@@ -175,6 +253,29 @@ class LaundryWorkflowTest extends TestCase
             ->assertJsonPath('pipeline_counts.ready_for_collection', 0)
             ->assertJsonPath('active_sessions.0.id', $session->id)
             ->assertJsonPath('active_sessions.0.shoe.reference', 'ASL-S-000003');
+    }
+
+    public function test_client_directory_filters_by_client_shoe_and_service_date(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $amina = Client::create(['name' => 'Amina Kintu', 'phone' => '+256700000101', 'email' => 'amina@example.test']);
+        $brian = Client::create(['name' => 'Brian Ouma', 'phone' => '+256700000102', 'email' => 'brian@example.test']);
+        $amina->shoes()->create(['reference' => 'ASL-S-101', 'shoe_type' => 'Running shoes', 'brand' => 'Nike', 'model' => 'Air Max']);
+        $brian->shoes()->create(['reference' => 'ASL-S-102', 'shoe_type' => 'Loafers', 'brand' => 'Clarks', 'model' => 'Torhill']);
+        $amina->orders()->create([
+            'reference' => 'ASL-FILTER-01', 'client_name' => $amina->name,
+            'notification_phone' => $amina->phone, 'notification_email' => $amina->email,
+            'created_by' => $admin->id, 'status' => 'received', 'received_at' => '2026-10-12 10:00:00',
+            'subtotal' => 30000, 'total' => 30000,
+        ]);
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/clients?client_name=Amina')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Amina Kintu');
+        $this->getJson('/api/clients?shoe_name=Torhill')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Brian Ouma');
+        $this->getJson('/api/clients?date=2026-10-12')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Amina Kintu');
     }
 
     private function sessionAt(string $status, User $worker): array

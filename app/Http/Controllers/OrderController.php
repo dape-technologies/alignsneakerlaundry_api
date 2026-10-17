@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\Shoe;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -16,6 +17,9 @@ class OrderController extends Controller
     {
         $orders = Order::query()
             ->with(['client', 'creator:id,name', 'cleaningSessions.shoe', 'payments'])
+            ->when($request->boolean('active'), fn ($query) => $query
+                ->whereHas('cleaningSessions', fn ($sessions) => $sessions
+                    ->whereIn('status', ['received', 'cleaning', 'ready_for_collection'])))
             ->when($request->string('status')->toString(), fn ($query, $status) => $query
                 ->whereHas('cleaningSessions', fn ($sessions) => $sessions->where('status', $status)))
             ->when($request->string('search')->toString(), function ($query, $search) {
@@ -149,6 +153,15 @@ class OrderController extends Controller
         ]);
 
         return response()->json($payment->load('recorder:id,name'), 201);
+    }
+
+    public function destroy(Order $order)
+    {
+        $paths = $order->photos()->pluck('path')->filter()->all();
+        DB::transaction(fn () => $order->delete());
+        Storage::disk('public')->delete($paths);
+
+        return response()->noContent();
     }
 
     private function resolveShoe(Client $client, array $sessionData): Shoe
