@@ -11,12 +11,34 @@ class ClientController extends Controller
     public function index(Request $request)
     {
         $clients = Client::query()
+            ->with('shoes')
             ->withCount(['orders', 'shoes'])
+            ->withMax('orders as last_service_at', 'received_at')
+            ->when($request->string('client_name')->toString(), fn ($query, $name) => $query
+                ->where('name', 'like', "%{$name}%"))
+            ->when($request->string('shoe_name')->toString(), function ($query, $shoe) {
+                $query->whereHas('shoes', function ($query) use ($shoe) {
+                    $query->where(function ($query) use ($shoe) {
+                        $query->where('reference', 'like', "%{$shoe}%")
+                            ->orWhere('brand', 'like', "%{$shoe}%")
+                            ->orWhere('model', 'like', "%{$shoe}%")
+                            ->orWhere('shoe_type', 'like', "%{$shoe}%")
+                            ->orWhere('color', 'like', "%{$shoe}%");
+                    });
+                });
+            })
+            ->when($request->date('date'), fn ($query, $date) => $query
+                ->whereHas('orders', fn ($orders) => $orders->whereDate('received_at', $date)))
             ->when($request->string('search')->toString(), function ($query, $search) {
                 $query->where(function ($query) use ($search) {
                     $query->where('name', 'like', "%{$search}%")
                         ->orWhere('phone', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhereHas('shoes', fn ($shoes) => $shoes
+                            ->where('reference', 'like', "%{$search}%")
+                            ->orWhere('brand', 'like', "%{$search}%")
+                            ->orWhere('model', 'like', "%{$search}%")
+                            ->orWhere('shoe_type', 'like', "%{$search}%"));
                 });
             })
             ->latest()

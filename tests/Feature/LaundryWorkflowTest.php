@@ -177,6 +177,29 @@ class LaundryWorkflowTest extends TestCase
             ->assertJsonPath('active_sessions.0.shoe.reference', 'ASL-S-000003');
     }
 
+    public function test_client_directory_filters_by_client_shoe_and_service_date(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $amina = Client::create(['name' => 'Amina Kintu', 'phone' => '+256700000101', 'email' => 'amina@example.test']);
+        $brian = Client::create(['name' => 'Brian Ouma', 'phone' => '+256700000102', 'email' => 'brian@example.test']);
+        $amina->shoes()->create(['reference' => 'ASL-S-101', 'shoe_type' => 'Running shoes', 'brand' => 'Nike', 'model' => 'Air Max']);
+        $brian->shoes()->create(['reference' => 'ASL-S-102', 'shoe_type' => 'Loafers', 'brand' => 'Clarks', 'model' => 'Torhill']);
+        $amina->orders()->create([
+            'reference' => 'ASL-FILTER-01', 'client_name' => $amina->name,
+            'notification_phone' => $amina->phone, 'notification_email' => $amina->email,
+            'created_by' => $admin->id, 'status' => 'received', 'received_at' => '2026-10-12 10:00:00',
+            'subtotal' => 30000, 'total' => 30000,
+        ]);
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/clients?client_name=Amina')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Amina Kintu');
+        $this->getJson('/api/clients?shoe_name=Torhill')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Brian Ouma');
+        $this->getJson('/api/clients?date=2026-10-12')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Amina Kintu');
+    }
+
     private function sessionAt(string $status, User $worker): array
     {
         $client = Client::create(['name' => 'Maya Atwine', 'phone' => '+256772341908', 'email' => 'maya@example.test']);

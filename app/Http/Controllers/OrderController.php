@@ -16,6 +16,9 @@ class OrderController extends Controller
     {
         $orders = Order::query()
             ->with(['client', 'creator:id,name', 'cleaningSessions.shoe', 'payments'])
+            ->when($request->boolean('active'), fn ($query) => $query
+                ->whereHas('cleaningSessions', fn ($sessions) => $sessions
+                    ->whereIn('status', ['received', 'cleaning', 'ready_for_collection'])))
             ->when($request->string('status')->toString(), fn ($query, $status) => $query
                 ->whereHas('cleaningSessions', fn ($sessions) => $sessions->where('status', $status)))
             ->when($request->string('search')->toString(), function ($query, $search) {
