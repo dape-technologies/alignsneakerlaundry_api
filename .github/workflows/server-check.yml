@@ -90,5 +90,10 @@ jobs:
             else
               echo 'laravel_error=unclassified'
             fi
+            exception_class=$(grep 'production.ERROR' "$latest_log" | tail -1 | \
+              sed -n 's/.*"exception":"\[object\] (\([^(:]*\).*/\1/p')
+            if [[ -n "$exception_class" ]]; then
+              printf 'laravel_exception_class=%s\n' "$exception_class"
+            fi
           fi
           REMOTE
