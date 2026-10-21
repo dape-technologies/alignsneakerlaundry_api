@@ -48,6 +48,9 @@ jobs:
       APP_PATH: ${{ vars.CPANEL_APP_PATH }}
       WEB_ROOT: ${{ vars.CPANEL_WEB_ROOT }}
       LARAVEL_ENV_FILE: ${{ secrets.LARAVEL_ENV_FILE }}
+      DB_DATABASE: ${{ secrets.DB_DATABASE }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
 
@@ -55,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS APP_PATH WEB_ROOT LARAVEL_ENV_FILE; do
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS APP_PATH WEB_ROOT LARAVEL_ENV_FILE DB_DATABASE DB_USERNAME DB_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing production setting: $name" >&2
               exit 1
@@ -86,6 +89,19 @@ jobs:
         shell: bash
         run: |
           printf '%s\n' "$LARAVEL_ENV_FILE" > "$RUNNER_TEMP/production.env"
+          grep -vE '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD|DB_CHARSET|DB_COLLATION)=' \
+            "$RUNNER_TEMP/production.env" > "$RUNNER_TEMP/production.env.next"
+          mv "$RUNNER_TEMP/production.env.next" "$RUNNER_TEMP/production.env"
+          {
+            printf '\nDB_CONNECTION=mysql\n'
+            printf 'DB_HOST=localhost\n'
+            printf 'DB_PORT=3306\n'
+            printf 'DB_DATABASE=%s\n' "$DB_DATABASE"
+            printf 'DB_USERNAME=%s\n' "$DB_USERNAME"
+            printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
+            printf 'DB_CHARSET=utf8mb4\n'
+            printf 'DB_COLLATION=utf8mb4_unicode_ci\n'
+          } >> "$RUNNER_TEMP/production.env"
           chmod 600 "$RUNNER_TEMP/production.env"
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" \
             "$RUNNER_TEMP/api-${GITHUB_SHA}.tar.gz" "$RUNNER_TEMP/production.env" \
