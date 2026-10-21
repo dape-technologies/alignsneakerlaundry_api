@@ -83,16 +83,14 @@ jobs:
       - name: Upload release
         shell: bash
         run: |
-          scp -o PubkeyAcceptedAlgorithms=ssh-rsa \
-            -i ~/.ssh/deploy_key -P "$SSH_PORT" \
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" \
             "$RUNNER_TEMP/api-${GITHUB_SHA}.tar.gz" \
             "$SSH_USER@$SSH_HOST:api-${GITHUB_SHA}.tar.gz"
 
       - name: Activate release
         shell: bash
         run: |
-          ssh -o PubkeyAcceptedAlgorithms=ssh-rsa \
-            -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             'bash -s' -- "$APP_PATH" "api-${GITHUB_SHA}.tar.gz" "$GITHUB_SHA" <<'REMOTE'
           set -euo pipefail
 
