@@ -51,7 +51,18 @@ jobs:
           composer --version 2>/dev/null || true
           if [[ -e "$HOME/public_html" ]]; then
             ls -ld "$HOME/public_html"
+            echo 'public_html_contents:'
+            find "$HOME/public_html" -mindepth 1 -maxdepth 2 \
+              -printf '%y %P\n' | sort | head -200
           else
             echo 'public_html=missing'
+          fi
+
+          echo 'database_extensions:'
+          php -m | grep -Ei 'mysqli|pdo_mysql|pdo_sqlite|sqlite3' | sort || true
+
+          if command -v uapi >/dev/null 2>&1; then
+            echo 'domains:'
+            uapi --output=jsonpretty DomainInfo list_domains || true
           fi
           REMOTE
