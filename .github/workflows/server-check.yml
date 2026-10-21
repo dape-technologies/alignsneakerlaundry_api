@@ -64,5 +64,8 @@ jobs:
           if command -v uapi >/dev/null 2>&1; then
             echo 'domains:'
             uapi --output=jsonpretty DomainInfo list_domains || true
+            echo 'gofresh_domain:'
+            uapi --output=jsonpretty DomainInfo single_domain_data \
+              domain=gofreshshoelaundry.com || true
           fi
           REMOTE
