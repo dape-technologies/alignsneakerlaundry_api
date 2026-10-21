@@ -16,7 +16,8 @@ class ReportController extends Controller
         $to = $request->date('to')?->endOfDay() ?? now()->endOfDay();
 
         $orders = Order::whereBetween('received_at', [$from, $to]);
-        $payments = Payment::whereBetween('paid_at', [$from, $to]);
+        $payments = Payment::whereBetween('paid_at', [$from, $to])
+            ->whereHas('order', fn ($query) => $query->where('status', '!=', 'cancelled'));
 
         return response()->json([
             'period' => ['from' => $from->toDateString(), 'to' => $to->toDateString()],

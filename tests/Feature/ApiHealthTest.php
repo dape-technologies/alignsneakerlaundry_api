@@ -12,7 +12,7 @@ class ApiHealthTest extends TestCase
             ->assertOk()
             ->assertJson([
                 'status' => 'ok',
-                'message' => 'Align Sneaker Laundry API is connected.',
+                'message' => 'Go Fresh Shoe Laundry API is connected.',
             ])
             ->assertJsonStructure(['timestamp']);
     }

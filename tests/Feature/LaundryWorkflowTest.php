@@ -9,6 +9,7 @@ use App\Models\Client;
 use App\Models\NotificationDelivery;
 use App\Models\Order;
 use App\Models\Shoe;
+use App\Models\Tag;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
@@ -20,7 +21,7 @@ class LaundryWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_worker_creates_an_order_for_existing_and_new_footwear_without_overwriting_client(): void
+    public function test_worker_creates_a_single_shoe_order_without_overwriting_client(): void
     {
         $worker = User::factory()->create(['role' => 'worker']);
         $client = Client::create(['name' => 'Grace Namusoke', 'phone' => '+256772555010', 'email' => 'grace@example.test']);
@@ -30,8 +31,7 @@ class LaundryWorkflowTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'client_id' => $client->id,
             'sessions' => [
-                ['shoe_id' => $existing->id, 'service' => 'Deep clean', 'unit_price' => 30000],
-                ['shoe' => ['shoe_type' => 'Loafers', 'brand' => 'Clarks', 'color' => 'Brown'], 'service' => 'Premium care', 'unit_price' => 45000],
+                ['shoe_id' => $existing->id, 'tag_id' => Tag::first()->id, 'service' => 'Deep clean', 'unit_price' => 30000],
             ],
             'deposit' => 10000,
             'payment_method' => 'mobile_money',
@@ -39,12 +39,13 @@ class LaundryWorkflowTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('client_name', 'Grace Namusoke')
-            ->assertJsonCount(2, 'cleaning_sessions')
-            ->assertJsonPath('total', 75000)
-            ->assertJsonPath('balance', 65000);
+            ->assertJsonCount(1, 'cleaning_sessions')
+            ->assertJsonPath('cleaning_sessions.0.tag.label', 'Tag 01')
+            ->assertJsonPath('total', 30000)
+            ->assertJsonPath('balance', 20000);
         $this->assertDatabaseCount('clients', 1);
-        $this->assertDatabaseCount('shoes', 2);
-        $this->assertDatabaseCount('cleaning_sessions', 2);
+        $this->assertDatabaseCount('shoes', 1);
+        $this->assertDatabaseCount('cleaning_sessions', 1);
         $this->assertSame('grace@example.test', $client->fresh()->email);
     }
 
@@ -55,12 +56,17 @@ class LaundryWorkflowTest extends TestCase
         $shoe = Shoe::create(['client_id' => $client->id, 'reference' => 'ASL-S-000002', 'shoe_type' => 'Running shoes']);
         Sanctum::actingAs($worker);
 
-        foreach ([25000, 30000] as $price) {
-            $this->postJson('/api/orders', [
-                'client_id' => $client->id,
-                'sessions' => [['shoe_id' => $shoe->id, 'service' => 'Deep clean', 'unit_price' => $price]],
-            ])->assertCreated();
-        }
+        $first = $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'sessions' => [['shoe_id' => $shoe->id, 'tag_id' => Tag::first()->id, 'service' => 'Deep clean', 'unit_price' => 25000]],
+        ])->assertCreated();
+        $this->patchJson('/api/cleaning-sessions/'.$first->json('cleaning_sessions.0.id').'/status', [
+            'status' => 'cancelled', 'expected_status' => 'received', 'notes' => 'Client changed their mind.',
+        ])->assertOk();
+        $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'sessions' => [['shoe_id' => $shoe->id, 'tag_id' => Tag::first()->id, 'service' => 'Deep clean', 'unit_price' => 30000]],
+        ])->assertCreated();
 
         $this->assertDatabaseCount('shoes', 1);
         $this->assertDatabaseCount('cleaning_sessions', 2);
@@ -136,7 +142,7 @@ class LaundryWorkflowTest extends TestCase
         $this->assertSame(1, $session->fresh()->ready_cycle);
     }
 
-    public function test_worker_can_move_footwear_between_any_active_roadmap_stages(): void
+    public function test_worker_can_move_footwear_through_allowed_active_roadmap_stages(): void
     {
         Queue::fake();
         $worker = User::factory()->create(['role' => 'worker']);
@@ -144,21 +150,21 @@ class LaundryWorkflowTest extends TestCase
         Sanctum::actingAs($worker);
 
         $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
-            'status' => 'ready_for_collection',
+            'status' => 'cleaning',
             'expected_status' => 'received',
         ])->assertOk();
         $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
-            'status' => 'received',
-            'expected_status' => 'ready_for_collection',
+            'status' => 'ready_for_collection',
+            'expected_status' => 'cleaning',
         ])->assertOk();
 
         $this->assertDatabaseHas('cleaning_session_status_history', [
-            'cleaning_session_id' => $session->id, 'from_status' => 'received', 'to_status' => 'ready_for_collection',
+            'cleaning_session_id' => $session->id, 'from_status' => 'received', 'to_status' => 'cleaning',
         ]);
         $this->assertDatabaseHas('cleaning_session_status_history', [
-            'cleaning_session_id' => $session->id, 'from_status' => 'ready_for_collection', 'to_status' => 'received',
+            'cleaning_session_id' => $session->id, 'from_status' => 'cleaning', 'to_status' => 'ready_for_collection',
         ]);
-        $this->assertNull($session->fresh()->ready_at);
+        $this->assertNotNull($session->fresh()->ready_at);
     }
 
     public function test_worker_login_session_remains_authenticated_during_a_roadmap_move(): void
@@ -255,23 +261,126 @@ class LaundryWorkflowTest extends TestCase
             ->assertJsonPath('active_sessions.0.shoe.reference', 'ASL-S-000003');
     }
 
+    public function test_order_requires_one_shoe_and_an_available_tag(): void
+    {
+        $worker = User::factory()->create(['role' => 'worker']);
+        $client = Client::create(['name' => 'Tag Tester', 'phone' => '+256700000111', 'email' => 'tags@example.test']);
+        $firstShoe = Shoe::create(['client_id' => $client->id, 'reference' => 'ASL-S-TAG-1', 'shoe_type' => 'Sneakers']);
+        $secondShoe = Shoe::create(['client_id' => $client->id, 'reference' => 'ASL-S-TAG-2', 'shoe_type' => 'Boots']);
+        Sanctum::actingAs($worker);
+
+        $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'sessions' => [
+                ['shoe_id' => $firstShoe->id, 'tag_id' => Tag::find(1)->id, 'service' => 'Deep clean', 'unit_price' => 30000],
+                ['shoe_id' => $secondShoe->id, 'tag_id' => Tag::find(2)->id, 'service' => 'Standard wash', 'unit_price' => 20000],
+            ],
+        ])->assertUnprocessable()->assertJsonValidationErrors('sessions');
+
+        $order = $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'sessions' => [['shoe_id' => $firstShoe->id, 'tag_id' => Tag::find(1)->id, 'service' => 'Deep clean', 'unit_price' => 30000]],
+        ])->assertCreated();
+
+        $this->getJson('/api/tags/available')->assertOk()->assertJsonCount(19, 'data');
+        $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'sessions' => [['shoe_id' => $firstShoe->id, 'tag_id' => Tag::find(2)->id, 'service' => 'Deep clean', 'unit_price' => 30000]],
+        ])->assertUnprocessable()->assertJsonValidationErrors('sessions.0.shoe_id');
+
+        $this->patchJson('/api/cleaning-sessions/'.$order->json('cleaning_sessions.0.id').'/status', [
+            'status' => 'cancelled', 'expected_status' => 'received', 'notes' => 'Duplicate intake corrected.',
+        ])->assertOk();
+        $this->getJson('/api/tags/available')->assertOk()->assertJsonCount(20, 'data');
+    }
+
+    public function test_cancellation_requires_a_reason_and_is_visible_to_the_owner(): void
+    {
+        $owner = User::factory()->create(['role' => 'admin']);
+        [$session, $order] = $this->sessionAt('received', $owner);
+        Sanctum::actingAs($owner);
+
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'cancelled', 'expected_status' => 'received',
+        ])->assertUnprocessable()->assertJsonValidationErrors('notes');
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'cancelled', 'expected_status' => 'received', 'notes' => 'Customer requested cancellation.',
+        ])->assertOk();
+
+        $this->assertSame('cancelled', $order->fresh()->status);
+        $this->getJson('/api/dashboard')->assertOk()
+            ->assertJsonPath('cancelled_orders.0.id', $order->id)
+            ->assertJsonPath('cancelled_orders.0.cleaning_sessions.0.status_history.0.notes', 'Customer requested cancellation.');
+    }
+
+    public function test_collection_requires_full_payment_and_collected_orders_remain_listed(): void
+    {
+        $worker = User::factory()->create(['role' => 'worker']);
+        [$session, $order] = $this->sessionAt('ready_for_collection', $worker);
+        Sanctum::actingAs($worker);
+
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'collected', 'expected_status' => 'ready_for_collection',
+        ])->assertUnprocessable()->assertJsonValidationErrors('status');
+        $this->postJson("/api/orders/{$order->id}/payments", [
+            'amount' => 26000, 'method' => 'cash',
+        ])->assertUnprocessable()->assertJsonValidationErrors('amount');
+        $this->postJson("/api/orders/{$order->id}/payments", [
+            'amount' => 25000, 'method' => 'cash',
+        ])->assertCreated();
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'collected', 'expected_status' => 'ready_for_collection',
+        ])->assertOk();
+
+        $this->assertSame('collected', $order->fresh()->status);
+        $this->getJson('/api/dashboard')->assertOk()->assertJsonCount(0, 'active_sessions');
+        $this->getJson('/api/orders?scope=collected')->assertOk()->assertJsonPath('data.0.id', $order->id);
+    }
+
+    public function test_cancelled_order_payments_are_retained_but_excluded_from_income(): void
+    {
+        $owner = User::factory()->create(['role' => 'admin']);
+        [$session, $order] = $this->sessionAt('received', $owner);
+        Sanctum::actingAs($owner);
+
+        $this->postJson("/api/orders/{$order->id}/payments", ['amount' => 10000, 'method' => 'cash'])->assertCreated();
+        $this->patchJson("/api/cleaning-sessions/{$session->id}/status", [
+            'status' => 'cancelled', 'expected_status' => 'received', 'notes' => 'Cancelled after deposit.',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('payments', ['order_id' => $order->id, 'amount' => 10000]);
+        $this->getJson('/api/reports')->assertOk()->assertJsonPath('collected_revenue', 0);
+        $this->getJson('/api/dashboard')->assertOk()->assertJsonPath('metrics.month_revenue', 0);
+        $this->postJson("/api/orders/{$order->id}/payments", ['amount' => 1000, 'method' => 'cash'])
+            ->assertUnprocessable()->assertJsonValidationErrors('amount');
+    }
+
     public function test_client_directory_filters_by_client_shoe_and_service_date(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $amina = Client::create(['name' => 'Amina Kintu', 'phone' => '+256700000101', 'email' => 'amina@example.test']);
         $brian = Client::create(['name' => 'Brian Ouma', 'phone' => '+256700000102', 'email' => 'brian@example.test']);
-        $amina->shoes()->create(['reference' => 'ASL-S-101', 'shoe_type' => 'Running shoes', 'brand' => 'Nike', 'model' => 'Air Max']);
+        $aminaShoe = $amina->shoes()->create(['reference' => 'ASL-S-101', 'shoe_type' => 'Running shoes', 'brand' => 'Nike', 'model' => 'Air Max']);
         $brian->shoes()->create(['reference' => 'ASL-S-102', 'shoe_type' => 'Loafers', 'brand' => 'Clarks', 'model' => 'Torhill']);
-        $amina->orders()->create([
+        $aminaOrder = $amina->orders()->create([
             'reference' => 'ASL-FILTER-01', 'client_name' => $amina->name,
             'notification_phone' => $amina->phone, 'notification_email' => $amina->email,
             'created_by' => $admin->id, 'status' => 'received', 'received_at' => '2026-10-12 10:00:00',
             'subtotal' => 30000, 'total' => 30000,
         ]);
+        CleaningSession::create([
+            'order_id' => $aminaOrder->id, 'shoe_id' => $aminaShoe->id, 'tag_id' => Tag::first()->id,
+            'status' => 'received', 'service' => 'Deep clean', 'unit_price' => 30000,
+            'received_at' => '2026-10-12 10:00:00',
+        ]);
         Sanctum::actingAs($admin);
 
         $this->getJson('/api/clients?client_name=Amina')
-            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Amina Kintu');
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.name', 'Amina Kintu')
+            ->assertJsonPath('data.0.shoes.0.cleaning_sessions_count', 1)
+            ->assertJsonPath('data.0.shoes.0.last_service_at', '2026-10-12 10:00:00');
         $this->getJson('/api/clients?shoe_name=Torhill')
             ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Brian Ouma');
         $this->getJson('/api/clients?date=2026-10-12')
@@ -289,7 +398,7 @@ class LaundryWorkflowTest extends TestCase
             'subtotal' => 25000, 'total' => 25000,
         ]);
         $session = CleaningSession::create([
-            'order_id' => $order->id, 'shoe_id' => $shoe->id, 'status' => $status,
+            'order_id' => $order->id, 'shoe_id' => $shoe->id, 'tag_id' => Tag::first()->id, 'status' => $status,
             'service' => 'Deep clean', 'unit_price' => 25000, 'received_at' => now(),
             'ready_cycle' => in_array($status, ['ready_for_collection', 'collected'], true) ? 1 : 0,
         ]);

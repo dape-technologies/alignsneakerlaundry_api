@@ -20,6 +20,10 @@ class CleaningSessionController extends Controller
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        if ($data['status'] === 'cancelled' && blank($data['notes'] ?? null)) {
+            throw ValidationException::withMessages(['notes' => ['A cancellation reason is required.']]);
+        }
+
         $result = DB::transaction(function () use ($request, $cleaningSession, $data) {
             $session = CleaningSession::query()->lockForUpdate()->findOrFail($cleaningSession->id);
             $previous = $session->status;
@@ -29,7 +33,7 @@ class CleaningSessionController extends Controller
             }
 
             $allowed = CleaningSession::TRANSITIONS[$previous] ?? [];
-            if (! in_array($data['status'], $allowed, true) && $request->user()->role !== 'admin') {
+            if (! in_array($data['status'], $allowed, true)) {
                 throw ValidationException::withMessages(['status' => ['That workflow change is not permitted.']]);
             }
             if ($previous === $data['status']) {
@@ -39,6 +43,9 @@ class CleaningSessionController extends Controller
             $order = $session->order()->lockForUpdate()->firstOrFail();
             if ($data['status'] === 'ready_for_collection' && ! $order->notification_email) {
                 throw ValidationException::withMessages(['status' => ['Add a valid client email before marking this footwear ready for collection.']]);
+            }
+            if ($data['status'] === 'collected' && $order->balance > 0) {
+                throw ValidationException::withMessages(['status' => ['Record the full outstanding payment before collection.']]);
             }
 
             $timestamps = match ($data['status']) {
@@ -125,7 +132,7 @@ class CleaningSessionController extends Controller
     private function loadSession(CleaningSession $session): CleaningSession
     {
         return $session->fresh()->load([
-            'shoe', 'photos', 'notifications', 'statusHistory.changer:id,name',
+            'shoe', 'tag', 'photos', 'notifications', 'statusHistory.changer:id,name',
         ]);
     }
 }

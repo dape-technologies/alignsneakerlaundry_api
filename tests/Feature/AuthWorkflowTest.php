@@ -78,10 +78,10 @@ class AuthWorkflowTest extends TestCase
         $this->seed();
 
         $this->postJson('/api/login', [
-            'email' => 'admin@alignsneakerlaundry',
+            'email' => 'admin@gofreshshoelaundry',
             'password' => 'admin1234',
         ])->assertOk()
             ->assertJsonPath('user.role', 'admin')
-            ->assertJsonPath('user.email', 'admin@alignsneakerlaundry');
+            ->assertJsonPath('user.email', 'admin@gofreshshoelaundry');
     }
 }
