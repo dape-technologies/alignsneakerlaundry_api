@@ -92,6 +92,10 @@ jobs:
             echo 'The deployed Laravel application is unavailable.' >&2
             exit 1
           }
+          migrating_from_sqlite=0
+          if grep -q '^DB_CONNECTION=sqlite$' "$env_file"; then
+            migrating_from_sqlite=1
+          fi
           command -v uapi >/dev/null 2>&1 || {
             echo 'cPanel UAPI is unavailable.' >&2
             exit 1
@@ -109,7 +113,8 @@ jobs:
           }
 
           database_list=$(uapi --output=json Mysql list_databases)
-          if ! printf '%s' "$database_list" | php -r '
+          database_exists=0
+          if printf '%s' "$database_list" | php -r '
             $name = $argv[1];
             $payload = json_decode(stream_get_contents(STDIN), true);
             foreach (($payload["result"]["data"] ?? []) as $database) {
@@ -117,6 +122,16 @@ jobs:
             }
             exit(1);
           ' "$db_database"; then
+            database_exists=1
+          fi
+
+          # A SQLite production environment means this MariaDB target is the
+          # incomplete cutover database from an earlier provisioning attempt.
+          if [[ "$database_exists" == 1 && "$migrating_from_sqlite" == 1 ]]; then
+            uapi --output=json Mysql delete_database name="$db_database" | check_uapi
+            database_exists=0
+          fi
+          if [[ "$database_exists" == 0 ]]; then
             uapi --output=json Mysql create_database name="$db_database" | check_uapi
           fi
 
@@ -158,7 +173,7 @@ jobs:
           cd "$current"
           php artisan down --retry=60
 
-          grep -vE '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD|DB_CHARSET|DB_COLLATION)=' \
+          grep -vE '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD|DB_CHARSET|DB_COLLATION|DB_ENGINE)=' \
             "$env_file" > "$shared/.env.next"
           {
             printf '\nDB_CONNECTION=mysql\n'
@@ -169,6 +184,7 @@ jobs:
             printf 'DB_PASSWORD=%s\n' "$db_password"
             printf 'DB_CHARSET=utf8mb4\n'
             printf 'DB_COLLATION=utf8mb4_unicode_ci\n'
+            printf 'DB_ENGINE=InnoDB\n'
           } >> "$shared/.env.next"
           chmod 600 "$shared/.env.next"
           mv "$shared/.env.next" "$env_file"
@@ -176,7 +192,7 @@ jobs:
           php artisan config:clear
           php artisan migrate --force
 
-          if [[ -s "$sqlite_backup" ]]; then
+          if [[ "$migrating_from_sqlite" == 1 && -s "$sqlite_backup" ]]; then
             SQLITE_SOURCE="$sqlite_backup" \
             MYSQL_DATABASE="$db_database" \
             MYSQL_USERNAME="$db_username" \

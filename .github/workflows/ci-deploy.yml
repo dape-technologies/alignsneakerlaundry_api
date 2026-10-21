@@ -89,7 +89,7 @@ jobs:
         shell: bash
         run: |
           printf '%s\n' "$LARAVEL_ENV_FILE" > "$RUNNER_TEMP/production.env"
-          grep -vE '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD|DB_CHARSET|DB_COLLATION)=' \
+          grep -vE '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD|DB_CHARSET|DB_COLLATION|DB_ENGINE)=' \
             "$RUNNER_TEMP/production.env" > "$RUNNER_TEMP/production.env.next"
           mv "$RUNNER_TEMP/production.env.next" "$RUNNER_TEMP/production.env"
           {
@@ -101,6 +101,7 @@ jobs:
             printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD"
             printf 'DB_CHARSET=utf8mb4\n'
             printf 'DB_COLLATION=utf8mb4_unicode_ci\n'
+            printf 'DB_ENGINE=InnoDB\n'
           } >> "$RUNNER_TEMP/production.env"
           chmod 600 "$RUNNER_TEMP/production.env"
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" \
