@@ -58,7 +58,8 @@ jobs:
           } > "$credentials"
           chmod 600 "$credentials"
           tar -czf "$compatibility" \
-            app/Providers/AppServiceProvider.php config/database.php
+            app/Providers/AppServiceProvider.php config/database.php \
+            database/seeders/DatabaseSeeder.php
           scp -o BatchMode=yes -o IdentitiesOnly=yes \
             -i ~/.ssh/deploy_key -P "$SSH_PORT" "$credentials" "$compatibility" \
             "$SSH_USER@$SSH_HOST:"
@@ -226,7 +227,8 @@ jobs:
           $mysql->exec('SET FOREIGN_KEY_CHECKS=0');
           try {
               foreach ($tables as $table) {
-                  if ($table === 'migrations' || !preg_match('/^[A-Za-z0-9_]+$/', $table)) {
+                  if (in_array($table, ['migrations', 'tags'], true)
+                      || !preg_match('/^[A-Za-z0-9_]+$/', $table)) {
                       continue;
                   }
                   $exists = $mysql->prepare(
