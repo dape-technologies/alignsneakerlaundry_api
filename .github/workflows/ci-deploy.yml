@@ -1,0 +1,158 @@
+name: CI and deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run tests
+        run: php artisan test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://gofreshshoelaundry.com
+    env:
+      SSH_HOST: ${{ vars.CPANEL_HOST }}
+      SSH_PORT: ${{ vars.CPANEL_PORT }}
+      SSH_USER: ${{ secrets.CPANEL_USER }}
+      SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.CPANEL_KNOWN_HOSTS }}
+      APP_PATH: ${{ vars.CPANEL_APP_PATH }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS APP_PATH; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing production setting: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Package application
+        shell: bash
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=.env \
+            --exclude=node_modules \
+            --exclude=vendor \
+            --exclude=tests \
+            -czf "$RUNNER_TEMP/api-${GITHUB_SHA}.tar.gz" .
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Upload release
+        shell: bash
+        run: |
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" \
+            "$RUNNER_TEMP/api-${GITHUB_SHA}.tar.gz" \
+            "$SSH_USER@$SSH_HOST:api-${GITHUB_SHA}.tar.gz"
+
+      - name: Activate release
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            'bash -s' -- "$APP_PATH" "api-${GITHUB_SHA}.tar.gz" "$GITHUB_SHA" <<'REMOTE'
+          set -euo pipefail
+
+          deploy_root=$1
+          archive=$2
+          revision=$3
+
+          case "$deploy_root" in
+            /*) ;;
+            *) echo 'CPANEL_APP_PATH must be an absolute path.' >&2; exit 1 ;;
+          esac
+
+          mkdir -p "$deploy_root/releases" "$deploy_root/shared/storage/app/public"
+          mkdir -p "$deploy_root/shared/storage/framework/cache" \
+            "$deploy_root/shared/storage/framework/sessions" \
+            "$deploy_root/shared/storage/framework/views" \
+            "$deploy_root/shared/storage/logs"
+
+          exec 9>"$deploy_root/.deploy.lock"
+          if command -v flock >/dev/null 2>&1; then
+            flock -w 180 9
+          fi
+
+          if [[ ! -f "$deploy_root/shared/.env" ]]; then
+            echo "Missing production environment file: $deploy_root/shared/.env" >&2
+            exit 1
+          fi
+
+          release="$deploy_root/releases/$revision"
+          rm -rf "$release"
+          mkdir -p "$release"
+          tar -xzf "$HOME/$archive" -C "$release"
+          rm -f "$HOME/$archive"
+
+          ln -s "$deploy_root/shared/.env" "$release/.env"
+          rm -rf "$release/storage"
+          ln -s "$deploy_root/shared/storage" "$release/storage"
+
+          # Carry the independently deployed Vue build into the new API release.
+          if [[ -d "$deploy_root/current/public" ]]; then
+            shopt -s dotglob nullglob
+            for item in "$deploy_root/current/public"/*; do
+              name=${item##*/}
+              case "$name" in
+                index.php|.htaccess|storage) continue ;;
+              esac
+              cp -a "$item" "$release/public/"
+            done
+            shopt -u dotglob nullglob
+          fi
+
+          cd "$release"
+          composer install --no-dev --no-interaction --prefer-dist \
+            --optimize-autoloader --no-progress
+          php artisan migrate --force
+          php artisan storage:link
+          php artisan optimize
+
+          chmod -R ug+rwX "$deploy_root/shared/storage"
+          ln -sfn "$release" "$deploy_root/current"
+          REMOTE
+
+      - name: Verify production
+        shell: bash
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 https://gofreshshoelaundry.com/api/health
