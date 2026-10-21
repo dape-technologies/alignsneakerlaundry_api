@@ -147,11 +147,28 @@ jobs:
           rm -f "$HOME/$env_file"
           touch "$deploy_root/shared/database/database.sqlite"
 
-          release="$deploy_root/releases/$revision"
+          releases_root=$(readlink -f "$deploy_root/releases")
+          current_release=$(readlink -f "$deploy_root/current" 2>/dev/null || true)
+          release="$releases_root/$revision"
           rm -rf "$release"
           mkdir -p "$release"
           tar -xzf "$HOME/$archive" -C "$release"
           rm -f "$HOME/$archive"
+
+          # Keep the active release as rollback and the incoming release.
+          # Every deletion target is resolved and constrained to releases_root.
+          for old_release in "$releases_root"/*; do
+            [[ -d "$old_release" ]] || continue
+            resolved_release=$(readlink -f "$old_release")
+            case "$resolved_release" in
+              "$releases_root"/*) ;;
+              *) echo 'Refusing to remove a release outside releases_root.' >&2; exit 1 ;;
+            esac
+            if [[ "$resolved_release" != "$current_release" && "$resolved_release" != "$release" ]]; then
+              printf 'Removing inactive release %s\n' "${old_release##*/}"
+              rm -rf -- "$old_release"
+            fi
+          done
 
           ln -s "$deploy_root/shared/.env" "$release/.env"
           rm -rf "$release/storage"
