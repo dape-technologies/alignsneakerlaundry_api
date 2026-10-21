@@ -1,0 +1,55 @@
+name: Check production server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SSH_HOST: ${{ vars.CPANEL_HOST }}
+      SSH_PORT: ${{ vars.CPANEL_PORT }}
+      SSH_USER: ${{ secrets.CPANEL_USER }}
+      SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.CPANEL_KNOWN_HOSTS }}
+    steps:
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing production setting: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Inspect deployment prerequisites
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          printf 'host=%s\n' "$(hostname)"
+          printf 'home=%s\n' "$HOME"
+          printf 'php=%s\n' "$(command -v php || true)"
+          php -r 'printf("php_version=%s\n", PHP_VERSION);' || true
+          printf 'composer=%s\n' "$(command -v composer || true)"
+          composer --version 2>/dev/null || true
+          if [[ -e "$HOME/public_html" ]]; then
+            ls -ld "$HOME/public_html"
+          else
+            echo 'public_html=missing'
+          fi
+          REMOTE
