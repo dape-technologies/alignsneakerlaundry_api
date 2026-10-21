@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Client;
 use App\Models\Order;
 use App\Models\Shoe;
+use App\Models\Tag;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -15,11 +16,14 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
+        $scope = $request->string('scope')->toString();
         $orders = Order::query()
-            ->with(['client', 'creator:id,name', 'cleaningSessions.shoe', 'payments'])
-            ->when($request->boolean('active'), fn ($query) => $query
+            ->with(['client', 'creator:id,name', 'cleaningSessions.shoe', 'cleaningSessions.tag', 'payments'])
+            ->when($request->boolean('active') || $scope === 'active', fn ($query) => $query
                 ->whereHas('cleaningSessions', fn ($sessions) => $sessions
                     ->whereIn('status', ['received', 'cleaning', 'ready_for_collection'])))
+            ->when($scope === 'collected', fn ($query) => $query->where('status', 'collected'))
+            ->when($scope === 'cancelled', fn ($query) => $query->where('status', 'cancelled'))
             ->when($request->string('status')->toString(), fn ($query, $status) => $query
                 ->whereHas('cleaningSessions', fn ($sessions) => $sessions->where('status', $status)))
             ->when($request->string('search')->toString(), function ($query, $search) {
@@ -48,16 +52,15 @@ class OrderController extends Controller
     {
         $data = $request->validate([
             'client_id' => ['required', 'exists:clients,id'],
-            'sessions' => ['required', 'array', 'min:1'],
+            'sessions' => ['required', 'array', 'size:1'],
             'sessions.*.shoe_id' => ['nullable', 'integer', 'exists:shoes,id'],
+            'sessions.*.tag_id' => ['required', 'integer', 'exists:tags,id'],
             'sessions.*.shoe.shoe_type' => ['required_without:sessions.*.shoe_id', 'string', 'max:100'],
             'sessions.*.shoe.brand' => ['nullable', 'string', 'max:100'],
             'sessions.*.shoe.model' => ['nullable', 'string', 'max:100'],
             'sessions.*.shoe.color' => ['nullable', 'string', 'max:100'],
             'sessions.*.shoe.size' => ['nullable', 'string', 'max:40'],
-            'sessions.*.shoe.identifying_notes' => ['nullable', 'string', 'max:2000'],
             'sessions.*.service' => ['required', 'string', 'max:120'],
-            'sessions.*.condition_notes' => ['nullable', 'string', 'max:2000'],
             'sessions.*.unit_price' => ['required', 'integer', 'min:0'],
             'sessions.*.photos' => ['nullable', 'array', 'max:6'],
             'sessions.*.photos.*' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:6144'],
@@ -65,7 +68,6 @@ class OrderController extends Controller
             'deposit' => ['nullable', 'integer', 'min:0'],
             'payment_method' => ['nullable', Rule::in(['cash', 'mobile_money', 'card', 'bank'])],
             'due_at' => ['nullable', 'date'],
-            'notes' => ['nullable', 'string', 'max:3000'],
         ]);
 
         $client = Client::findOrFail($data['client_id']);
@@ -93,17 +95,23 @@ class OrderController extends Controller
                 'subtotal' => $subtotal,
                 'discount' => $discount,
                 'total' => $total,
-                'notes' => $data['notes'] ?? null,
             ]);
             $order->update(['reference' => 'ASL-'.now()->format('ymd').'-'.str_pad((string) $order->id, 4, '0', STR_PAD_LEFT)]);
 
             foreach ($data['sessions'] as $index => $sessionData) {
                 $shoe = $this->resolveShoe($client, $sessionData);
+                $tag = Tag::query()->lockForUpdate()->findOrFail($sessionData['tag_id']);
+                if ($tag->cleaningSessions()->whereIn('status', ['received', 'cleaning', 'ready_for_collection'])->exists()) {
+                    throw ValidationException::withMessages(['sessions.0.tag_id' => ['That tag is already assigned to inbound footwear.']]);
+                }
+                if ($shoe->cleaningSessions()->whereIn('status', ['received', 'cleaning', 'ready_for_collection'])->exists()) {
+                    throw ValidationException::withMessages(['sessions.0.shoe_id' => ['That footwear is already in the care roadmap.']]);
+                }
                 $session = $order->cleaningSessions()->create([
                     'shoe_id' => $shoe->id,
+                    'tag_id' => $tag->id,
                     'status' => 'received',
                     'service' => $sessionData['service'],
-                    'condition_notes' => $sessionData['condition_notes'] ?? null,
                     'unit_price' => $sessionData['unit_price'],
                     'received_at' => now(),
                 ]);
@@ -145,12 +153,19 @@ class OrderController extends Controller
             'method' => ['required', Rule::in(['cash', 'mobile_money', 'card', 'bank'])],
             'reference' => ['nullable', 'string', 'max:120'],
         ]);
-        if ($data['amount'] > $order->balance) {
-            throw ValidationException::withMessages(['amount' => ['Payment cannot exceed the outstanding balance.']]);
-        }
-        $payment = $order->payments()->create([
-            ...$data, 'paid_at' => now(), 'recorded_by' => $request->user()->id,
-        ]);
+        $payment = DB::transaction(function () use ($request, $order, $data) {
+            $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
+            if ($lockedOrder->status === 'cancelled') {
+                throw ValidationException::withMessages(['amount' => ['Payments cannot be recorded for a cancelled order.']]);
+            }
+            if ($data['amount'] > $lockedOrder->balance) {
+                throw ValidationException::withMessages(['amount' => ['Payment cannot exceed the outstanding balance.']]);
+            }
+
+            return $lockedOrder->payments()->create([
+                ...$data, 'paid_at' => now(), 'recorded_by' => $request->user()->id,
+            ]);
+        });
 
         return response()->json($payment->load('recorder:id,name'), 201);
     }
@@ -167,7 +182,7 @@ class OrderController extends Controller
     private function resolveShoe(Client $client, array $sessionData): Shoe
     {
         if (! empty($sessionData['shoe_id'])) {
-            $shoe = $client->shoes()->find($sessionData['shoe_id']);
+            $shoe = $client->shoes()->lockForUpdate()->find($sessionData['shoe_id']);
             if (! $shoe) {
                 throw ValidationException::withMessages(['sessions' => ['Selected footwear does not belong to this client.']]);
             }
@@ -185,7 +200,7 @@ class OrderController extends Controller
     {
         return $order->fresh()->load([
             'client', 'creator:id,name', 'payments.recorder:id,name', 'photos',
-            'cleaningSessions.shoe', 'cleaningSessions.photos',
+            'cleaningSessions.shoe', 'cleaningSessions.tag', 'cleaningSessions.photos',
             'cleaningSessions.statusHistory.changer:id,name', 'cleaningSessions.notifications',
         ]);
     }

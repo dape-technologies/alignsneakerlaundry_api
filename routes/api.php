@@ -1,19 +1,20 @@
 <?php
 
-use App\Http\Controllers\AuthController;
 use App\Http\Controllers\AttendantController;
+use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CleaningSessionController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ShoeController;
+use App\Http\Controllers\TagController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', function () {
     return response()->json([
         'status' => 'ok',
-        'message' => 'Align Sneaker Laundry API is connected.',
+        'message' => 'Go Fresh Shoe Laundry API is connected.',
         'timestamp' => now()->toISOString(),
     ]);
 });
@@ -24,6 +25,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/dashboard', DashboardController::class);
+    Route::get('/tags/available', [TagController::class, 'index']);
 
     Route::apiResource('clients', ClientController::class)->only(['index', 'store', 'show', 'update']);
     Route::post('/clients/{client}/shoes', [ShoeController::class, 'store']);

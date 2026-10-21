@@ -11,13 +11,31 @@ class ClientController extends Controller
 {
     public function index(Request $request)
     {
+        $shoeName = $request->string('shoe_name')->toString();
+        $serviceDate = $request->date('date');
+
         $clients = Client::query()
-            ->with('shoes')
+            ->with(['shoes' => function ($query) use ($shoeName, $serviceDate) {
+                $query->withCount('cleaningSessions')
+                    ->withMax('cleaningSessions as last_service_at', 'received_at')
+                    ->when($shoeName, fn ($query, $shoe) => $query->where(function ($query) use ($shoe) {
+                        $query->where('reference', 'like', "%{$shoe}%")
+                            ->orWhere('brand', 'like', "%{$shoe}%")
+                            ->orWhere('model', 'like', "%{$shoe}%")
+                            ->orWhere('shoe_type', 'like', "%{$shoe}%")
+                            ->orWhere('color', 'like', "%{$shoe}%");
+                    }))
+                    ->when($serviceDate, fn ($query, $date) => $query->whereHas(
+                        'cleaningSessions',
+                        fn ($sessions) => $sessions->whereDate('received_at', $date),
+                    ))
+                    ->latest('updated_at');
+            }])
             ->withCount(['orders', 'shoes'])
             ->withMax('orders as last_service_at', 'received_at')
             ->when($request->string('client_name')->toString(), fn ($query, $name) => $query
                 ->where('name', 'like', "%{$name}%"))
-            ->when($request->string('shoe_name')->toString(), function ($query, $shoe) {
+            ->when($shoeName, function ($query, $shoe) {
                 $query->whereHas('shoes', function ($query) use ($shoe) {
                     $query->where(function ($query) use ($shoe) {
                         $query->where('reference', 'like', "%{$shoe}%")
@@ -28,8 +46,10 @@ class ClientController extends Controller
                     });
                 });
             })
-            ->when($request->date('date'), fn ($query, $date) => $query
-                ->whereHas('orders', fn ($orders) => $orders->whereDate('received_at', $date)))
+            ->when($serviceDate, fn ($query, $date) => $query->whereHas(
+                'shoes.cleaningSessions',
+                fn ($sessions) => $sessions->whereDate('received_at', $date),
+            ))
             ->when($request->string('search')->toString(), function ($query, $search) {
                 $query->where(function ($query) use ($search) {
                     $query->where('name', 'like', "%{$search}%")
@@ -61,7 +81,6 @@ class ClientController extends Controller
             'shoe.model' => ['nullable', 'string', 'max:100'],
             'shoe.color' => ['nullable', 'string', 'max:100'],
             'shoe.size' => ['nullable', 'string', 'max:40'],
-            'shoe.identifying_notes' => ['nullable', 'string', 'max:2000'],
             'reference_photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:6144'],
         ]);
 

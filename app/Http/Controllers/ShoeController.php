@@ -42,7 +42,6 @@ class ShoeController extends Controller
             'model' => ['nullable', 'string', 'max:100'],
             'color' => ['nullable', 'string', 'max:100'],
             'size' => ['nullable', 'string', 'max:40'],
-            'identifying_notes' => ['nullable', 'string', 'max:2000'],
             'active' => ['sometimes', 'boolean'],
             'reference_photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:6144'],
         ]);

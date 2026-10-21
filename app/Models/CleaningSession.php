@@ -14,15 +14,15 @@ class CleaningSession extends Model
     ];
 
     public const TRANSITIONS = [
-        'received' => ['cleaning', 'ready_for_collection', 'cancelled'],
-        'cleaning' => ['received', 'ready_for_collection', 'cancelled'],
-        'ready_for_collection' => ['received', 'cleaning', 'collected'],
+        'received' => ['cleaning', 'cancelled'],
+        'cleaning' => ['received', 'ready_for_collection'],
+        'ready_for_collection' => ['cleaning', 'collected'],
         'collected' => [],
         'cancelled' => [],
     ];
 
     protected $fillable = [
-        'order_id', 'shoe_id', 'status', 'service', 'condition_notes', 'unit_price',
+        'order_id', 'shoe_id', 'tag_id', 'status', 'service', 'unit_price',
         'ready_cycle', 'received_at', 'cleaning_at', 'drying_at',
         'quality_checked_at', 'ready_at', 'collected_at',
     ];
@@ -49,6 +49,11 @@ class CleaningSession extends Model
     public function shoe()
     {
         return $this->belongsTo(Shoe::class);
+    }
+
+    public function tag()
+    {
+        return $this->belongsTo(Tag::class);
     }
 
     public function statusHistory()

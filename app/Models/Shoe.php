@@ -12,7 +12,7 @@ class Shoe extends Model
 
     protected $fillable = [
         'reference', 'client_id', 'shoe_type', 'brand', 'model', 'color', 'size',
-        'identifying_notes', 'reference_photo_path', 'active',
+        'reference_photo_path', 'active',
     ];
 
     protected $appends = ['display_name', 'reference_photo_url'];

@@ -14,5 +14,5 @@ Your **{{ $cleaningSession->shoe->display_name }}** has completed our care proce
 
 For assistance, contact us at **{{ config('app.business_phone') }}** or reply to this email.
 
-Thank you for choosing Align Sneaker Laundry.
+Thank you for choosing Go Fresh Shoe Laundry.
 </x-mail::message>
