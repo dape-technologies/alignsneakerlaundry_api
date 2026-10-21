@@ -46,6 +46,8 @@ jobs:
       SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.CPANEL_KNOWN_HOSTS }}
       APP_PATH: ${{ vars.CPANEL_APP_PATH }}
+      WEB_ROOT: ${{ vars.CPANEL_WEB_ROOT }}
+      LARAVEL_ENV_FILE: ${{ secrets.LARAVEL_ENV_FILE }}
     steps:
       - uses: actions/checkout@v7
 
@@ -53,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS APP_PATH; do
+          for name in SSH_HOST SSH_PORT SSH_USER SSH_KEY SSH_KNOWN_HOSTS APP_PATH WEB_ROOT LARAVEL_ENV_FILE; do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing production setting: $name" >&2
               exit 1
@@ -83,27 +85,37 @@ jobs:
       - name: Upload release
         shell: bash
         run: |
+          printf '%s\n' "$LARAVEL_ENV_FILE" > "$RUNNER_TEMP/production.env"
+          chmod 600 "$RUNNER_TEMP/production.env"
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" \
-            "$RUNNER_TEMP/api-${GITHUB_SHA}.tar.gz" \
-            "$SSH_USER@$SSH_HOST:api-${GITHUB_SHA}.tar.gz"
+            "$RUNNER_TEMP/api-${GITHUB_SHA}.tar.gz" "$RUNNER_TEMP/production.env" \
+            "$SSH_USER@$SSH_HOST:"
 
       - name: Activate release
         shell: bash
         run: |
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            'bash -s' -- "$APP_PATH" "api-${GITHUB_SHA}.tar.gz" "$GITHUB_SHA" <<'REMOTE'
+            'bash -s' -- "$APP_PATH" "$WEB_ROOT" "api-${GITHUB_SHA}.tar.gz" \
+            'production.env' "$GITHUB_SHA" <<'REMOTE'
           set -euo pipefail
 
           deploy_root=$1
-          archive=$2
-          revision=$3
+          web_root=$2
+          archive=$3
+          env_file=$4
+          revision=$5
 
           case "$deploy_root" in
-            /*) ;;
-            *) echo 'CPANEL_APP_PATH must be an absolute path.' >&2; exit 1 ;;
+            "$HOME"/*) ;;
+            *) echo 'CPANEL_APP_PATH must be inside the cPanel home directory.' >&2; exit 1 ;;
+          esac
+          case "$web_root" in
+            "$HOME"/*) ;;
+            *) echo 'CPANEL_WEB_ROOT must be inside the cPanel home directory.' >&2; exit 1 ;;
           esac
 
           mkdir -p "$deploy_root/releases" "$deploy_root/shared/storage/app/public"
+          mkdir -p "$deploy_root/shared/database" "$web_root"
           mkdir -p "$deploy_root/shared/storage/framework/cache" \
             "$deploy_root/shared/storage/framework/sessions" \
             "$deploy_root/shared/storage/framework/views" \
@@ -114,10 +126,9 @@ jobs:
             flock -w 180 9
           fi
 
-          if [[ ! -f "$deploy_root/shared/.env" ]]; then
-            echo "Missing production environment file: $deploy_root/shared/.env" >&2
-            exit 1
-          fi
+          install -m 600 "$HOME/$env_file" "$deploy_root/shared/.env"
+          rm -f "$HOME/$env_file"
+          touch "$deploy_root/shared/database/database.sqlite"
 
           release="$deploy_root/releases/$revision"
           rm -rf "$release"
@@ -128,6 +139,9 @@ jobs:
           ln -s "$deploy_root/shared/.env" "$release/.env"
           rm -rf "$release/storage"
           ln -s "$deploy_root/shared/storage" "$release/storage"
+          rm -f "$release/database/database.sqlite"
+          ln -s "$deploy_root/shared/database/database.sqlite" \
+            "$release/database/database.sqlite"
 
           # Carry the independently deployed Vue build into the new API release.
           if [[ -d "$deploy_root/current/public" ]]; then
@@ -146,11 +160,17 @@ jobs:
           composer install --no-dev --no-interaction --prefer-dist \
             --optimize-autoloader --no-progress
           php artisan migrate --force
+          php artisan db:seed --force
           php artisan storage:link
-          php artisan optimize
+          php artisan config:cache
+          php artisan view:cache
 
           chmod -R ug+rwX "$deploy_root/shared/storage"
           ln -sfn "$release" "$deploy_root/current"
+
+          cp "$release/public/.htaccess" "$web_root/.htaccess"
+          ln -sfn "$deploy_root/current/public/index.php" "$web_root/index.php"
+          ln -sfn "$deploy_root/shared/storage/app/public" "$web_root/storage"
           REMOTE
 
       - name: Verify production
