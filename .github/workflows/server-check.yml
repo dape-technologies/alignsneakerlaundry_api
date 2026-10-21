@@ -40,6 +40,7 @@ jobs:
         shell: bash
         run: |
           ssh -vvv -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o PubkeyAcceptedAlgorithms=ssh-rsa \
             -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             'bash -s' <<'REMOTE'
           set -euo pipefail
