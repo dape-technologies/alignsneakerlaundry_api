@@ -68,4 +68,27 @@ jobs:
             uapi --output=jsonpretty DomainInfo single_domain_data \
               domain=gofreshshoelaundry.com || true
           fi
+
+          log_dir="$HOME/apps/gofreshshoelaundry/shared/storage/logs"
+          latest_log=$(find "$log_dir" -maxdepth 1 -type f -name 'laravel*.log' \
+            -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+          if [[ -n "$latest_log" ]]; then
+            if grep -q 'attempt to write a readonly database' "$latest_log"; then
+              echo 'laravel_error=sqlite_readonly'
+            elif grep -q 'unable to open database file' "$latest_log"; then
+              echo 'laravel_error=sqlite_unavailable'
+            elif grep -q 'no such table' "$latest_log"; then
+              echo 'laravel_error=database_schema'
+            elif grep -q 'could not find driver' "$latest_log"; then
+              echo 'laravel_error=database_driver'
+            elif grep -q 'No application encryption key' "$latest_log"; then
+              echo 'laravel_error=application_key'
+            elif grep -q 'The MAC is invalid' "$latest_log"; then
+              echo 'laravel_error=session_encryption'
+            elif grep -q 'Permission denied' "$latest_log"; then
+              echo 'laravel_error=filesystem_permission'
+            else
+              echo 'laravel_error=unclassified'
+            fi
+          fi
           REMOTE
